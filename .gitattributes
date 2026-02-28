@@ -1,0 +1,18 @@
+# Normalize line endings for all text files
+* text=auto
+
+# Jupyter notebooks: keep LF, disable diff
+*.ipynb text eol=lf
+*.ipynb linguist-language=Jupyter Notebook
+
+# Python source: LF
+*.py text eol=lf
+
+# Config files: LF
+*.toml text eol=lf
+*.txt  text eol=lf
+*.md   text eol=lf
+*.cff  text eol=lf
+
+# Binaries
+*.png binary

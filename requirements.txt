@@ -1,0 +1,14 @@
+# Core
+numpy>=1.24
+scikit-learn>=1.3
+xgboost>=2.0
+pandas>=2.0
+scipy>=1.10
+matplotlib>=3.7
+
+# Notebooks
+jupyter>=1.0
+ipykernel>=6.0
+
+# Data download
+kaggle>=1.6

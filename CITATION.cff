@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+type: software
+title: "Quantized Prediction Models: Output-Space Regularization for Stable and Interpretable Regression"
+authors:
+  - family-names: "Ortiz-Gómez"
+    given-names: "Carlos R."
+version: "0.1.0"
+date-released: "2025-12-01"
+doi: "10.5281/zenodo.17785949"
+url: "https://doi.org/10.5281/zenodo.17785949"
+license: MIT
+keywords:
+  - "quantized prediction models"
+  - "output-space regularization"
+  - "credit scoring"
+  - "stability"
+  - "interpretability"
+  - "machine learning"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.17785949"
+    description: "Zenodo archive (code + paper, priority record)"
+  # Once accepted on arXiv, add the arXiv entry below and fill in the ID:
+  # - type: url
+  #   value: "https://arxiv.org/abs/XXXX.XXXXX"
+  #   description: "arXiv preprint"
+preferred-citation:
+  type: report
+  authors:
+    - family-names: "Ortiz-Gómez"
+      given-names: "Carlos R."
+  title: "Quantized Prediction Models: Output-Space Regularization for Stable and Interpretable Regression"
+  year: 2025
+  month: 12
+  doi: "10.5281/zenodo.17785949"
+  institution:
+    name: "Independent Researcher"
