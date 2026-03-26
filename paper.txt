@@ -1,0 +1,1255 @@
+% This manuscript's numeric results are produced by the accompanying
+% Jupyter notebooks in the repository.  To keep the paper in sync, run
+% ``python generate_notebooks.py`` and then ``--sync-paper`` to copy the
+% latest metrics into this file before typesetting.
+\documentclass{article}
+\usepackage{natbib}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{url}
+\theoremstyle{plain}
+\newtheorem{proposition}{Proposition}
+
+
+% Language setting
+% Replace `english' with e.g. `spanish' to change the document language
+\usepackage[english]{babel}
+
+% Set page size and margins
+% Replace `letterpaper' with `a4paper' for UK/EU standard size
+\usepackage[letterpaper,top=2cm,bottom=2cm,left=3cm,right=3cm,marginparwidth=1.75cm]{geometry}
+
+% Useful packages
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+\usepackage{natbib}
+
+\title{
+    Quantized Prediction Models:\\[0.5em]
+    \large Output-Space Regularization for Stable and Interpretable Regression
+}
+
+\author{
+    Carlos R. Ortiz-Gómez\\
+    \textit{Independent Researcher}
+}
+
+\date{December 2025}
+
+\begin{document}
+\maketitle
+
+\begin{center}
+\vspace{-1em}
+\small DOI: \href{https://doi.org/10.5281/zenodo.17785949}{10.5281/zenodo.17785949}
+\end{center}
+
+
+
+\begin{abstract}
+We introduce Quantized Prediction Models (QPMs), a regression framework
+that constrains predictions to a finite set of output levels. Unlike
+traditional parameter-based regularization, QPMs regularize directly in
+the \emph{output space} through supervised quantization, creating a
+functional bottleneck that suppresses noise, improves stability, and
+produces discrete, monotone predictors suited for governance-sensitive
+domains.
+
+QPMs employ an optimizer-driven binning procedure that concentrates
+resolution around high-stakes decision thresholds while maintaining a
+globally coherent, interpretable score ladder. To address distributional
+drift, we propose an Anchored Calibration update that adjusts bin
+representatives while keeping bin edges fixed, thereby guaranteeing
+zero rank-order churn.
+
+Theoretically, QPMs reduce local sensitivity, decrease variance, and
+preserve monotonicity under anchored updates. Empirically, they match the
+predictive performance of standard gradient boosting models while
+delivering dramatically improved stability, offering a practical,
+governance-aligned alternative for applications in which stability is as
+critical as accuracy. 
+\end{abstract}
+
+
+\section{Introduction}
+
+Modern regression models such as gradient-boosted machines and neural
+networks deliver state-of-the-art predictive performance on tabular
+data. However, these models often exhibit \emph{output jitter}: small
+perturbations in the input can produce unpredictable, non-monotonic
+fluctuations in the output. In high-stakes domains such as credit
+decisioning, these fluctuations are operationally costly. They can
+cause rank-order drift across retraining cycles, instability in score
+ladders, and inconsistent treatment strategies—all of which degrade the
+reliability of downstream decisions.
+
+This challenge is increasingly observed across production ML systems in
+regulated decision environments. Although modern models improve headline
+metrics such as AUC or KS, their continuous outputs can be sensitive to
+distributional drift, dataset revisions, or minor perturbations in
+feature construction. As a result, practitioners frequently encounter a
+tension between the expressive power of flexible ML models and the
+stability, monotonicity, and governance requirements that traditional
+scorecards provide by construction. The result is a structural
+misalignment: ML practitioners optimize for \emph{predictive accuracy},
+whereas risk practitioners optimize for \emph{output stability} and
+replicability across time.
+
+Existing regularization methods—such as L1/L2 penalties, dropout,
+learning-rate control, or tree-depth limits—constrain parameters or
+model complexity, but do not address the core issue: unconstrained
+continuous outputs amplify noise and propagate instability into
+operational systems. What is missing is a mechanism that regularizes the
+\emph{prediction space} directly.
+
+\paragraph{Relation to Existing Work.}
+Our formulation builds on a long lineage of scorecard development
+methods used in credit risk (e.g., Siddiqi, 2012) and supervised
+discretization approaches such as optimal binning. QPMs do not replace
+these traditions; rather, they formalize supervised binning as an
+explicit output-space regularizer and introduce mechanisms—
+optimizer-driven non-uniform binning and Anchored Calibration—that
+provide guarantees on stability and monotone updating under drift. The
+goal is not to claim an entirely new paradigm, but to clarify and extend
+established practices through a unified mathematical and
+governance-oriented framework.
+
+\textbf{Our Proposal.} We introduce \emph{Quantized Prediction Models}
+(QPM), a framework that constrains the model output to a finite, ordered
+set of prediction levels (a ``ladder''). As illustrated in
+Figure~\ref{fig:qpm_staircase}, this quantization operator acts as an
+information bottleneck that suppresses noise, stabilizes rank ordering,
+and yields operationally stable and auditable model outputs. The
+approach retains the expressive power of flexible function
+approximators while enforcing the stability properties favored in
+traditional risk modeling.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{figure2_staircase.png}
+    \caption{\textbf{Output-Space Regularization in Action.} The light
+    blue line shows the continuous, noisy predictions of the latent
+    model (here a GBM) on the UCI Default test set, sorted by the latent
+    QPM score. The orange step function shows the final Quantized
+    Prediction Model (QPM) output. The quantization operator acts as a
+    functional regularizer, suppressing local high-variance fluctuations
+    while preserving the global monotonic risk structure.}
+    \label{fig:qpm_staircase}
+\end{figure}
+
+\textbf{Our Contributions.} This work makes the following contributions:
+\begin{itemize}
+    \item We formulate supervised regression as an \emph{adaptive
+    output quantization} problem, showing how discretized predictions
+    act as a principled functional regularizer.
+    \item We introduce \emph{Anchored Calibration}, a post-training
+    update rule that incorporates new information while guaranteeing
+    \emph{zero rank-order churn} when bin edges remain fixed.
+    \item We develop an optimizer-driven binning procedure that
+    allocates \emph{local resolution} where operational sensitivity is
+    highest. Instead of distributing bins uniformly across the
+    prediction range, QPMs allow practitioners to specify a
+    high-resolution window—typically near decision thresholds or tail
+    regions—while maintaining coarser granularity elsewhere. This
+    ``focus region'' design preserves global monotonicity and
+    interpretability while providing the fine-grained discrimination
+    needed for policy cutoffs and other narrow-band decisions.
+    \item We provide theoretical results showing that QPMs suppress
+    sub-bin variability and exhibit a \emph{denoising effect} analogous
+    to an autoencoder in output space.
+    \item Through empirical studies on public credit datasets, we show
+    that QPMs preserve AUC and KS performance while dramatically reducing
+    prediction drift and stabilizing score ladders across retraining
+    cycles.
+\end{itemize}
+
+By directly regularizing the output space, QPMs reconcile the strengths
+of modern machine learning with the stability, interpretability, and
+governance requirements of operational risk management. This enables the
+deployment of high-power models in environments where stability is as
+critical as accuracy.
+
+
+\section{Related Work}
+
+\subsection{Gradient Boosting and Ensemble Methods}
+
+Gradient boosting \citep{friedman2001greedy} and its modern
+implementations such as XGBoost \citep{chen2016xgboost},
+LightGBM \citep{ke2017lightgbm}, and CatBoost
+\citep{dorogush2018catboost} have become the dominant modeling
+paradigms for tabular data. These models provide excellent predictive
+performance through stage-wise additive modeling and sophisticated
+regularization of the \emph{parameter space}. However, they impose no
+constraints on the \emph{output space} of the predictive function.
+Consequently, their continuous score outputs may fluctuate under
+distributional shifts or training perturbations, leading to instability
+in downstream decision systems. Our work differs by introducing a
+regularization mechanism that directly constrains the model’s outputs,
+thereby improving stability while preserving the predictive power of
+boosting-based models.
+
+\subsection{Post-Hoc Calibration, Scorecards, and Supervised Discretization}
+
+Classical credit scoring models rely on logistic regression
+\citep{hosmer2013applied}, often combined with coarse-classing or
+supervised binning to produce monotone, interpretable risk ladders
+\citep{siddiqi2012credit}. These scorecards implicitly regularize the
+\emph{shape} and \emph{resolution} of the predictive function by
+restricting coefficients and discretizing inputs.
+
+Several post-hoc calibration methods refine continuous model outputs
+into better-behaved probability estimates. Platt scaling
+\citep{platt1999probabilistic} and isotonic regression
+\citep{zadrozny2002transforming} enforce monotonicity in logits or
+scores, but do not modify model structure or constrain the set of
+possible outputs. Their outputs remain continuous and can therefore
+exhibit drift or instability across retraining cycles.
+
+Supervised discretization tools such as OptBinning
+\citep{anderson2020optbinning} provide an optimization-based approach to
+binning numerical predictors under monotonicity or minimum-support
+constraints. These approaches learn interpretable partitions for
+\emph{features}, not for \emph{predictions}. QPMs invert this paradigm:
+they discretize the \emph{model output} itself. This yields stability
+benefits that cannot be achieved by input discretization alone.
+
+\subsection{Quantization in Deep Learning}
+
+Quantization has been widely studied in deep learning, primarily as a
+means of reducing model size and accelerating inference. Techniques
+such as weight quantization, activation quantization, and integer-only
+arithmetic enable deployment of neural networks under resource
+constraints \citep{jacob2018quantization, banner2018post,
+gholami2021survey}. In these settings, quantization is applied to the
+\emph{parameters} or intermediate \emph{activations} for computational
+efficiency.
+
+In contrast, we apply quantization to the \emph{model output}, not to
+internal representations. Our goal is functional regularization rather
+than compression: discrete outputs explicitly constrain the predictive
+range, yielding stability and interpretability benefits absent from
+typical quantization approaches.
+
+\subsection{Monotonicity Constraints and Structured Outputs}
+
+A parallel line of work seeks to incorporate structural constraints into
+prediction functions. Isotonic regression
+\citep{barlow1972statistical, deleeuw2009isotonic} and its scalable
+variants \citep{tyree2011parallel} impose global monotonicity, ensuring
+that the rank ordering of predictions respects known relationships.
+Lattice-based models \citep{you2017deep, canini2016fast} combine
+piecewise-linear functions with partial monotonicity to produce
+interpretable models on tabular data.
+
+These methods constrain the \emph{shape} of the regression function but
+do not restrict the \emph{set of attainable outputs}. QPMs differ in
+that they enforce a discrete, ordered set of prediction levels
+independent of any monotonicity requirement. In this sense, QPMs can be
+viewed as an output-space generalization of isotonic regression: they
+support arbitrary interactions in the latent model while guaranteeing
+stable, monotone, and interpretable outputs.
+
+\subsection{Information Bottleneck Theory}
+
+The information bottleneck framework \citep{tishby1999information,
+tishby2015deep} studies how learning systems compress information while
+retaining task-relevant structure. Quantized representations naturally
+reduce mutual information between inputs and internal states, acting as
+noise filters in both theoretical and empirical settings.
+
+By constraining the output of a predictive function to a small set of
+discrete values, QPMs effectively impose an information bottleneck at
+the \emph{prediction level}. This reduces sensitivity to small,
+functionally irrelevant variations in the input, thereby stabilizing
+rank ordering and mitigating noise amplification.
+
+\subsection{Summary}
+
+Across these strands of literature, the focus has been on constraining
+model parameters, internal activations, or functional shape. QPMs
+address a complementary gap by regularizing the \emph{output space}
+directly through quantization. This yields a unique combination of
+prediction stability, noise attenuation, and governance-friendly
+interpretability while remaining compatible with the expressive power of
+modern ML architectures.
+
+\section{Methodology}
+\label{sec:method}
+
+Quantized Prediction Models (QPMs) combine the expressive power of
+continuous regressors with the stability and interpretability of
+piecewise-constant score ladders. This section formalizes the framework,
+introduces the binning and optimization mechanisms, and describes how
+QPMs support drift-aware updates with provably zero rank-order churn.
+
+\subsection{Framework Overview}
+
+QPMs decompose the prediction process into two components: a flexible
+latent function and a supervised quantizer applied to its output.
+
+\paragraph{Latent Function.}
+Let $F(x)$ denote a continuous regression function, typically a
+stage-wise additive model such as gradient boosting, trained on
+tabular features $x \in \mathbb{R}^d$ to approximate a probability of
+default $y \in \{0,1\}$ or a bounded risk score. The mapping
+$F : \mathbb{R}^d \to \mathbb{R}$ produces a latent score that may
+exhibit fine-grained, noisy variation.
+
+\paragraph{Quantization Operator.}
+A QPM prediction is obtained by passing $F(x)$ through a learned
+quantizer:
+\[
+Q(F(x); \theta) = q_k
+\quad \text{if} \quad
+F(x) \in [b_k, b_{k+1}),
+\]
+where $\theta = \{b_k\}_{k=1}^{K+1}$ are bin edges and
+$\{q_k\}_{k=1}^{K}$ are bin representatives. Throughout this work,
+$q_k$ denotes the empirical conditional mean
+$\mathbb{E}[Y\,|\,F(x)\!\in\![b_k,b_{k+1}))$, providing an
+$L^2$-optimal piecewise-constant approximation to $Y$ given the
+binning.
+
+Thus QPM predictors take the form
+\[
+\hat{y}(x)
+=
+Q(F(x); \theta),
+\]
+which constrains model outputs to a finite ladder of ordered
+prediction levels.
+
+\paragraph{Conceptual Objective.}
+At a conceptual level, QPM training seeks a quantized empirical-risk
+minimizer:
+\[
+\min_{F,\theta}
+\;\;
+\sum_{i=1}^n \bigl(y_i - Q(F(x_i);\theta)\bigr)^2
+\;+\;
+\lambda\,\Omega(F),
+\]
+where $\Omega(F)$ controls model complexity (e.g., depth, shrinkage, or
+smoothness). The quantizer functions as an explicit
+\emph{information bottleneck}, suppressing sub-bin fluctuations of $F$
+and improving stability. In practice, we approximate this joint objective
+via a two-step procedure: (i) train $F$ as a continuous booster, then
+(ii) learn $\theta$ via supervised discretization of the latent scores.
+
+\paragraph{Implementation in this Work.}
+All experiments in this paper use the following operational recipe:
+\begin{enumerate}
+    \item Train a gradient-boosted regressor $F$ on $(x_i,y_i)$ using
+    squared-error loss on $y_i \in \{0,1\}$.
+    \item Learn the quantizer parameters $\theta = \{b_k, q_k\}$ by
+    optimizing bin edges and bin representatives on $F(x_i)$ and $y_i$,
+    with support and monotonicity constraints.
+    \item For model updates under drift, keep bin edges fixed and update
+    both $F$ and the bin representatives $\{q_k\}$ via residual stacking
+    and Anchored Calibration.
+\end{enumerate}
+No in-the-loop quantization or straight-through estimators are used in
+this work; we rely entirely on post-hoc output-space regularization.
+
+\subsection{Optimizer-Driven Supervised Binning}
+
+Uniform quantization or plain quantile binning ignore operational
+importance: risk tails, decision boundaries, or medically relevant
+thresholds typically require higher resolution than bulk regions. We
+therefore learn bin edges via an optimizer-driven discretization
+procedure inspired by supervised binning frameworks such as OptBinning
+\citep{anderson2020optbinning} and constrained regression.
+
+\paragraph{Supervised Objective.}
+Let $\mathcal{L}(\theta)$ denote the loss incurred when using quantizer
+$\theta$ on latent scores $F(x_i)$:
+\[
+\mathcal{L}(\theta)
+=
+\sum_{i=1}^n \bigl(y_i - Q(F(x_i);\theta)\bigr)^2.
+\]
+We seek to minimize this loss subject to ordered edges and operational
+constraints:
+\[
+\min_{\theta}
+\;\mathcal{L}(\theta)
+\qquad
+\text{s.t. }
+b_1 < b_2 < \ldots < b_{K+1}, \quad
+\text{and}
+\quad
+\#\{i: F(x_i)\in[b_k,b_{k+1})\} \ge m_{\min},
+\]
+optionally combined with monotonicity or smoothness constraints on
+$\{q_k\}$.
+
+\paragraph{Resolution Density and Focus Region.}
+To allocate bins where accuracy and policy sensitivity are highest, we
+introduce an importance weight $w(z)$ over the latent score domain
+$z = F(x)$ and define a resolution density
+$\rho(z) \propto w(z)$. For example,
+\[
+w(z) =
+\begin{cases}
+\lambda_{\text{tail}}, & z \in \text{risk tail},\\[2pt]
+\lambda_{\text{boundary}}, & z \text{ near a decision cutoff},\\[2pt]
+\lambda_{\text{bulk}}, & \text{otherwise},
+\end{cases}
+\]
+with $\lambda_{\text{tail}}, \lambda_{\text{boundary}} > \lambda_{\text{bulk}}$.
+Bin edges are then chosen so that
+\[
+\int_{b_k}^{b_{k+1}} \rho(z)\,dz = \frac{1}{K},
+\]
+yielding non-uniform, supervised quantization that concentrates
+resolution around a practitioner-specified \emph{focus region} while
+keeping coarser bins elsewhere. In practice, we instantiate this via a
+calibrated mapping from $F$ to PD, then search over $(n_\text{low},
+n_\text{mid}, n_\text{high})$ configurations that satisfy minimum band
+size and monotonicity constraints.
+
+\paragraph{Monotone Center Smoothing.}
+Once preliminary bin representatives $q_k$ are computed empirically, we
+optionally project them onto the space of monotone sequences via
+isotonic regression. This projection enforces global monotonicity and
+removes small violations arising from finite-sample noise, yielding
+governance-compliant ladders that behave like traditional scorecards.
+
+\subsection{Drift-Aware Updates with Zero Churn}
+
+Model recalibration on new data often induces \emph{prediction churn}:
+samples near bin boundaries swap rank positions, even when global
+metrics such as AUC or KS improve. QPMs mitigate this via two
+mechanisms that restrict updates to smooth, monotone adjustments: a
+residual stacking step on the latent function and an anchored update of
+bin representatives.
+
+\subsubsection{Residual Stacking}
+
+Instead of retraining a new $F_{t+1}$ from scratch, we perform a
+conservative update on top of the existing model. Let
+$r_t(x_i) = y_i - F_t(x_i)$ be residuals on new data. We fit a shallow
+learner $h_t(x)$ (e.g., a small number of additional boosting stages)
+to predict $r_t(x)$ and update:
+\[
+F_{t+1}(x)
+=
+F_t(x)
++
+\eta\,h_t(x),
+\]
+with a small learning rate $\eta > 0$. This follows the gradient
+boosting paradigm but in a restricted “fine-tuning” regime, limiting the
+magnitude of changes in $F$ and thereby reducing large shifts in the
+latent scoring surface.
+
+\subsubsection{Anchored Calibration}
+
+Given old bin representatives $\mu^{\text{old}}_k$ and empirical bin
+means $\mu^{\text{obs}}_k$ computed on updated data (using the same bin
+edges), QPM updates them via:
+\[
+\mu_k^{\text{new}}
+=
+\alpha\,\mu_k^{\text{old}}
++
+(1-\alpha)\,\mu_k^{\text{obs}},
+\qquad \alpha\in[0,1].
+\]
+
+Because bin edges remain fixed, each sample retains its previous bin
+assignment; only the representative values change. The parameter
+$\alpha$ controls how aggressively the scorecard adapts to the new
+empirical PDs: $\alpha=1$ recovers the original model, while
+$\alpha=0$ overwrites bin values with fully updated empirical means (we
+optionally project $\mu^{\text{obs}}$ to a monotone sequence prior to
+anchoring).
+
+\paragraph{Zero Rank-Order Churn.}
+Let $B(F(x))$ denote the bin index associated with latent score
+$F(x)$. If $F$ and the bin edges are fixed, then for any two points
+$x_i, x_j$:
+\[
+F(x_i) < F(x_j)
+\quad\Longrightarrow\quad
+B(F(x_i)) \le B(F(x_j)).
+\]
+Anchored Calibration modifies only the representatives $\mu_k$; it does
+not alter $F$ or the bin edges used to compute $B(F(x))$. Therefore
+bin membership is invariant:
+\[
+B_{\text{new}}(F(x_i)) = B_{\text{old}}(F(x_i)),
+\]
+and the updated predictions satisfy
+\[
+Q_{\text{new}}(F(x_i))
+=
+\mu^{\text{new}}_{B(F(x_i))}
+\;\le\;
+\mu^{\text{new}}_{B(F(x_j))}
+=
+Q_{\text{new}}(F(x_j)),
+\]
+since the sequence $\{\mu^{\text{new}}_k\}$ is enforced to be monotone.
+Thus QPM updates preserve rank ordering \emph{exactly} when bin edges
+are held fixed. This property is operationally critical in domains that
+rely on stable decision rules, such as credit underwriting, fraud
+detection, and medical triage.
+
+\section{Experiments}
+\label{sec:experiments}
+
+We begin by evaluating Quantized Prediction Models (QPMs) on the UCI
+\emph{Default of Credit Card Clients} dataset, a standard benchmark for
+credit risk modeling. This experiment illustrates three key claims:
+(i) QPMs match or slightly improve upon GBM accuracy (AUC, KS, MSE),
+(ii) the quantized outputs form a bank-style score ladder with smooth,
+monotone PDs, and (iii) QPM fine-tuning with fixed bin edges
+substantially reduces prediction churn relative to both independent
+rebinning and standard GBM retrains.
+
+%==============================================================
+\subsection{Experiment 1: UCI Default of Credit Card Clients}
+\label{sec:exp-uci}
+%==============================================================
+
+We first evaluate Quantized Prediction Models on the UCI 
+\emph{Default of Credit Card Clients} dataset \citep{yeh2009default}, 
+which contains $30{,}000$ credit card accounts, $25$ features, and an 
+empirical default rate of $22.1\%$. This dataset is a standard public 
+benchmark for probability-of-default (PD) modeling and closely 
+resembles industrial credit portfolios.
+
+\paragraph{Backbone Optimization.}
+Backbone predictors in all experiments are trained strictly \emph{out of the box}. 
+We apply no hyperparameter tuning, no feature selection, and no class-imbalance 
+correction (e.g., weighting, resampling, or synthetic augmentation). As a result, 
+backbone GBMs represent minimally optimized learners whose performance reflects 
+default model behavior rather than a tuned or engineered pipeline. This design is 
+intentional: QPM operates exclusively in the output space, and our objective is to 
+isolate its effect by comparing each QPM model directly to its own backbone 
+predictor. Consequently, the meaningful quantity in our results is the 
+\emph{relative change} in performance (e.g., $\Delta$AUC), not the nominal 
+magnitude of the backbone AUC itself.
+
+We split the data into training and test sets and compare three
+families of models:
+
+\begin{enumerate}
+    \item a traditional \textbf{scorecard} based on logistic
+    regression with coarse-classed features,
+    \item a strong \textbf{Gradient Boosting Machine (GBM)}, and
+    \item a \textbf{QPM} constructed on top of the same GBM latent function.
+\end{enumerate}
+
+\paragraph{Scorecard (Logistic Regression).}
+To represent the ``white box'' side of credit modeling, we train a
+standard logistic regression scorecard. Continuous variables are
+coarsely binned using supervised monotone discretization
+(e.g., quantile or domain-informed splits), transformed into
+weight-of-evidence (WOE) encodings, and passed to a logistic
+regressor. The resulting log-odds are mapped into ten equal-frequency
+bands (approximately $600$ accounts each) to form a ten-grade PD
+ladder. On the test set, the scorecard attains:
+\[
+\text{AUC} = 0.7599,\quad
+\text{KS} = 0.4018,\quad
+\text{MSE} = 0.1389.
+\]
+
+
+The band-level PDs increase smoothly from $\approx 6\%$ to
+$\approx 72\%$, yielding a traditional, decile-based risk ladder.
+
+\paragraph{GBM (Continuous).}
+As a high-capacity benchmark, we use an XGBoost regressor with
+hyperparameters tuned for strong performance on tabular credit data:
+
+\begin{verbatim}
+xgb.XGBRegressor(
+    n_estimators=400,
+    learning_rate=0.03,
+    max_depth=4,
+    subsample=0.7,
+    colsample_bytree=0.7,
+    min_child_weight=10,
+    gamma=2,
+    objective="reg:squarederror",
+    tree_method="hist",
+    random_state=857
+)
+\end{verbatim}
+
+This model produces continuous PD estimates in $(0,1)$ without any
+output constraints or explicit score ladder structure.
+
+\paragraph{QPM (GBM + Supervised Quantizer).}
+QPM uses the same GBM as a latent function $F(x)$ and learns a
+non-uniform output quantizer on top. We first train the GBM to
+convergence, then apply the optimizer-driven binning procedure from
+Section~\ref{sec:method} with:
+
+\[
+\text{focus\_pd} = (0.05, 0.20),\quad
+n_{\text{low,max}} = 6,\;
+n_{\text{mid,max}} = 6,\;
+n_{\text{high,max}} = 6,
+\]
+\[
+\text{min\_band\_size} = 300,\quad
+\text{prior\_}\pi_0 = \hat{p}_{\text{train}},\quad
+\text{PD cap} = 0.80.
+\]
+
+The algorithm allocates bins to low-, mid-, and high-risk regions,
+merges small bins to respect the minimum band size, and computes
+bin-level PD centers with Laplace/Bayesian smoothing and a PD cap of
+$0.80$. On this dataset the chosen configuration is:
+
+\[
+n_{\text{low}} = 5,\quad
+n_{\text{mid}} = 6,\quad
+n_{\text{high}} = 6,\quad
+K = 14\ \text{total bins},
+\]
+with empirical PD centers (smoothed) ranging from $2.46\%$ to $80\%$:
+
+\[
+(0.0246,\; 0.0298,\; 0.0590,\; 0.0914,\;
+ 0.1296,\; 0.1472,\; 0.1675,\; 0.1948,\;
+ 0.2806,\; 0.4192,\; 0.5265,\; 0.6269,\;
+ 0.7742,\; 0.8000).
+\]
+
+Most of the resolution is concentrated in the operationally critical
+low-to-mid PD region $(5\%,20\%)$, with coarser bins in the very high
+risk tail.
+
+%--------------------------------------------------------------
+\subsubsection{Predictive Performance}
+%--------------------------------------------------------------
+
+Table~\ref{tab:uci-perf} summarizes out-of-sample performance for the
+three models. For QPM we report both the latent GBM score $F(x)$ (after
+training with the QPM objective) and the final quantized PD output.
+
+\begin{table}[t]
+    \centering
+    \caption{Predictive performance on the UCI Default dataset.
+    QPM matches or slightly improves GBM accuracy while outperforming
+    a traditional scorecard. Values are point estimates; brackets
+    report bootstrap $95\%$ confidence intervals for GBM and QPM.}
+    \label{tab:uci-perf}
+    \begin{tabular}{lccc}
+        \toprule
+        Model / Output          & MSE    & AUC    & KS     \\
+        \midrule
+        Scorecard (LR, 10 bands) 
+                                & 0.1389 & 0.7599 & 0.4018 \\
+        GBM (continuous)        & 0.1359 & 0.7727 & 0.4203 \\
+        QPM (latent $F(x)$)     & 0.1359 & 0.7773 & 0.4289 \\
+        QPM (quantized PD)      & 0.1359 & 0.7750 & 0.4225 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Bootstrap analysis over the test set yields:
+
+\begin{align*}
+\text{AUC}_{\text{GBM}}
+    &= 0.7727\;[0.7574, 0.7881],\\
+\text{AUC}_{\text{QPM (quantized)}}
+    &= 0.7752\;[0.7599, 0.7902],\\
+\text{KS}_{\text{GBM}}
+    &= 0.4236\;[0.3961, 0.4532],\\
+\text{KS}_{\text{QPM (quantized)}}
+    &= 0.4231\;[0.3935, 0.4516].
+\end{align*}
+
+The confidence intervals substantially overlap, indicating that QPM and
+GBM are statistically indistinguishable in AUC and KS on this dataset,
+while both improve upon the logistic scorecard.
+
+%--------------------------------------------------------------
+\subsubsection{Bank-Style Score Ladder}
+%--------------------------------------------------------------
+
+Table~\ref{tab:qpm_scorecard} reports the complete QPM bank-style 
+score ladder obtained on the UCI Default test set.  
+The quantizer produces $K=14$ ordered grades $G01$--$G14$, each defined 
+by a latent-score interval $[F_{\min}, F_{\max})$ with an associated 
+posterior PD center and empirical performance statistics.
+
+On the test set, the PD centers rise smoothly from $2.46\%$ to 
+$80\%$, with strictly monotone progression across all grades and 
+well-behaved lift profiles. The non-uniform bin widths concentrate 
+resolution in the low-to-mid PD region $(5\%$--$20\%)$, aligning with 
+operational decision boundaries such as acquisition cutoffs and early 
+collections triggers.
+
+Qualitatively, the resulting ladder resembles a traditional credit 
+scorecard: it segments the portfolio into interpretable, 
+risk-aligned strata while preserving the stability and monotonicity 
+properties expected in regulated environments. At the same time, the 
+latent GBM provides richer predictive structure than a handcrafted 
+logistic regression model, yielding a hybrid architecture that is both 
+powerful and governance-friendly.
+
+\begin{table*}[t]
+\centering
+\caption{QPM bank-style scorecard on the UCI Default test set.
+Each grade corresponds to a non-uniform bin in latent score space, 
+with monotone PD centers produced by the optimized quantizer.}
+\label{tab:qpm_scorecard}
+\scriptsize
+\begin{tabular}{cccccccccccccc}
+\toprule
+\textbf{Grade} & \textbf{Band} & $F_{\min}$ & $F_{\max}$ & \textbf{PD} & 
+\#\textbf{Acct} & \textbf{\%Portf} & \#\textbf{Def} &
+\textbf{DefR} & \textbf{Odds} & \textbf{Lift} &
+\textbf{Cum\%Acct} & \textbf{Cum\%Def} \\
+\midrule
+G01 & 0  & -0.0147 & 0.0479 & 0.0246 & 222 & 0.0370 & 12 & 0.0541 & 17.50 & 0.2444 & 0.0370 & 0.0090 \\
+G02 & 1  & 0.0479  & 0.0635 & 0.0298 & 318 & 0.0530 & 13 & 0.0409 & 23.46 & 0.1848 & 0.0900 & 0.0188 \\
+G03 & 2  & 0.0635  & 0.0889 & 0.0590 & 665 & 0.1108 & 42 & 0.0632 & 14.83 & 0.2856 & 0.2008 & 0.0505 \\
+G04 & 3  & 0.0889  & 0.1142 & 0.0914 & 841 & 0.1402 & 84 & 0.0999 &  9.01 & 0.4516 & 0.3410 & 0.1138 \\
+G05 & 4  & 0.1142  & 0.1395 & 0.1296 & 700 & 0.1167 & 94 & 0.1343 &  6.45 & 0.6072 & 0.4577 & 0.1846 \\
+G06 & 5  & 0.1395  & 0.1648 & 0.1472 & 579 & 0.0965 & 89 & 0.1537 &  5.51 & 0.6950 & 0.5542 & 0.2517 \\
+G07 & 6  & 0.1648  & 0.1901 & 0.1675 & 479 & 0.0798 & 89 & 0.1858 &  4.38 & 0.8401 & 0.6340 & 0.3188 \\
+G08 & 7  & 0.1901  & 0.2154 & 0.1948 & 368 & 0.0613 & 63 & 0.1712 &  4.84 & 0.7741 & 0.6953 & 0.3662 \\
+G09 & 8  & 0.2154  & 0.3303 & 0.2806 & 735 & 0.1225 &210 & 0.2857 &  2.50 & 1.2919 & 0.8178 & 0.5245 \\
+G10 & 9  & 0.3303  & 0.4452 & 0.4192 & 313 & 0.0522 &119 & 0.3802 &  1.63 & 1.7190 & 0.8700 & 0.6142 \\
+G11 & 10 & 0.4452  & 0.5601 & 0.5265 & 145 & 0.0242 & 75 & 0.5172 &  0.93 & 2.3387 & 0.8942 & 0.6707 \\
+G12 & 11 & 0.5601  & 0.6751 & 0.6269 & 259 & 0.0432 &159 & 0.6139 &  0.63 & 2.7757 & 0.9373 & 0.7905 \\
+G13 & 12 & 0.6751  & 0.7900 & 0.7742 & 326 & 0.0543 &238 & 0.7301 &  0.37 & 3.3010 & 0.9917 & 0.9699 \\
+G14 & 13 & 0.7900  & 0.9049 & 0.8000 &  50 & 0.0083 & 40 & 0.8000 &  0.25 & 3.6172 & 1.0000 & 1.0000 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+
+%--------------------------------------------------------------
+\subsubsection{Churn Under Model Updates}
+%--------------------------------------------------------------
+
+We next examine how QPM behaves under model updates, comparing:
+
+\begin{enumerate}
+    \item \textbf{QPM A: Independent Retrains with Re-optimized Bins.}\\
+    Train QPM twice on different temporal slices and re-optimize the
+    quantizer each time.
+    \item \textbf{QPM B: Fine-Tune with Fixed Bin Edges (Ours).}\\
+    Fix the bin edges learned in the first fit and update only the latent
+    GBM and bin means on the second slice.
+    \item \textbf{GBM vs QPM: Head-to-Head Churn.}\\
+    Compare stochastic GBM retrains to QPM fine-tunes on the same splits.
+    \item \textbf{QPM C: Calibration-Only Anchored Updates.}\\
+    Apply Anchored Calibration with fully frozen bin edges and latent
+    model, using new data only to shift bin centers.
+\end{enumerate}
+
+We measure churn both in terms of percentile ranks and in terms of band
+assignments. For percentile churn we compute the absolute change in
+each account’s percentile rank between version~1 and version~2. For
+band churn we assign accounts to global quantile bands (5 equal-sized
+bands) or to \emph{native} QPM bands and track how many accounts change
+band or jump by two or more bands.
+
+\paragraph{Independent Rebin vs Fixed Edges.}
+When QPM is fully re-fit with a fresh quantizer (scenario~A), the
+native 8-band representation (for the churn experiment) exhibits:
+
+\begin{itemize}
+    \item $31.4\%$ of accounts change native band at least once,
+    \item $2.8\%$ move by two or more native bands.
+\end{itemize}
+
+Under fine-tuning with fixed edges (scenario~B), the same native bands
+yield:
+
+\begin{itemize}
+    \item $7.0\%$ of accounts change band,
+    \item $0.3\%$ move by two or more bands.
+\end{itemize}
+
+Thus, holding bin edges fixed reduces native-band churn by more than a
+factor of four compared to independent rebinning, while preserving
+predictive performance.
+
+\paragraph{GBM vs QPM: Continuous vs Quantized PD.}
+For a fair comparison to a fully continuous model, we consider 5 global
+percentile bands applied to both a stochastic GBM retrain and the QPM
+fine-tune. Between version~1 and version~2 we observe:
+
+\begin{itemize}
+    \item \textbf{GBM retrain (continuous PD):}
+    mean absolute percentile shift $0.0332$; band churn
+    $14.6\%$; $0.2\%$ move $\ge 2$ bands.
+    \item \textbf{QPM fine-tune (quantized PD):}
+    mean absolute percentile shift $0.0392$; band churn
+    $17.7\%$; $0.3\%$ move $\ge 2$ bands.
+\end{itemize}
+
+On this dataset, QPM fine-tuning exhibits churn of the same order of
+magnitude as GBM retraining when both are summarized into coarse global
+bands. The small differences fall within the range one would expect
+from stochasticity and binning effects. The key advantage of QPM lies
+not in uniformly dominating GBM on this metric, but in the additional
+structural guarantees it can provide through Anchored Calibration.
+
+\paragraph{Calibration-Only Updates and Zero Churn.}
+Finally, we simulate next-month drift using $5{,}000$ new observations
+and apply Anchored Calibration (scenario~C) on a held-out population of
+$6{,}000$ accounts. When we allow both the latent GBM and quantizer to
+retrain, $26.3\%$ of accounts change grade and $4.4\%$ jump by more than
+one grade, even though PD centers move only by $10^{-3}$--$10^{-2}$.
+
+In contrast, when we apply Anchored Calibration with fixed bin edges
+and latent scores, \emph{no} account changes band ($0.00\%$ churn).
+Bin-level PD centers adjust by at most a few basis points to match the
+new empirical rates, but the discrete ladder and individual grade
+assignments remain unchanged. This empirically validates the theoretical
+zero-churn property from Appendix~A.
+
+%--------------------------------------------------------------
+\paragraph{Summary.}
+%--------------------------------------------------------------
+
+On the UCI Default benchmark, QPM:
+
+\begin{itemize}
+    \item matches or slightly improves the predictive performance of a
+    strong GBM while outperforming a traditional logistic scorecard,
+    \item induces a bank-style, non-uniform PD ladder with high
+    resolution in the decision-relevant region,
+    \item offers substantially lower churn under fixed-edge fine-tuning
+    compared to independent rebinning, and
+    \item supports a calibration-only mode with \emph{strictly zero}
+    rank-order churn, a property not available in unconstrained GBMs
+    or logistic scorecards.
+\end{itemize}
+
+This experiment illustrates QPM's role as an output-space regularizer:
+it turns a high-capacity GBM into a stable, discrete score ladder,
+retaining the predictive power of modern ML while recovering many of
+the operational properties valued in traditional scorecard practice.
+
+
+\subsection{Experiment 2: Home Credit Default Risk}
+
+We next evaluate QPM on the large-scale \emph{Home Credit Default Risk} dataset 
+\citep{homecredit2018}, which contains approximately $300{,}000$ applicants and 
+over $120$ engineered financial and behavioral features. This dataset is widely 
+used in credit scoring benchmarks and exhibits a default rate of $8.0\%$ in our 
+processed sample.
+
+We replicate the same protocol as in Experiment~1: a standard GBM serves
+as the latent function $F(x)$, and an adaptive quantizer is optimized
+using the output-focused procedure from Section~\ref{sec:method}. We
+train an XGBRegressor with $400$ trees, depth $4$, and learning rate
+$0.03$ as the baseline.
+
+\paragraph{Quantizer configuration.}
+The optimization routine identifies a $21$-bin ladder with concentrated
+resolution in the low-to-mid PD region:
+\begin{itemize}
+    \item focus region: $(0.05, 0.20)$,
+    \item $n_{\text{low}} = 8$, $n_{\text{mid}} = 8$, $n_{\text{high}} = 8$,
+    \item total bins: $21$,
+    \item PD centers: from $0.42\%$ to $64.7\%$.
+\end{itemize}
+Despite the large dataset, the optimizer respects the minimum band size
+of $300$ observations and produces a smooth, monotone PD sequence.
+
+\subsubsection{Predictive Performance}
+
+Table~\ref{tab:homecredit_perf} reports performance for the baseline GBM,
+the latent QPM score $F(x)$, and the final quantized PD ladder.
+
+\begin{table}[t]
+    \centering
+    \caption{Predictive performance on the Home Credit Default Risk test set.
+    QPM matches the GBM's MSE and exhibits only minor AUC/KS degradation,
+    despite compressing predictions to a 21-level score ladder.}
+    \label{tab:homecredit_perf}
+    \begin{tabular}{lccc}
+        \toprule
+        Model / Output          & MSE    & AUC    & KS     \\
+        \midrule
+        GBM (continuous)        & 0.0683 & 0.7517 & 0.3784 \\
+        QPM (latent $F(x)$)     & 0.0683 & 0.7499 & 0.3751 \\
+        QPM (quantized PD)      & 0.0683 & 0.7487 & 0.3740 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+The QPM MSE is indistinguishable from the GBM’s, and AUC/KS degrade only
+marginally ($\Delta \mathrm{AUC} \approx 0.003$), a remarkable result
+given that predictions are restricted to a $21$-point ladder. This again
+supports the interpretation of QPM as an output-space regularizer: the
+latent booster produces a smooth scoring surface, while the quantizer
+suppresses small, high-variance fluctuations.
+
+\subsubsection{Churn Under Model Updates}
+
+We repeat the churn analysis from Experiment~1 by comparing:
+
+\begin{enumerate}
+    \item a standard GBM retrain on the same data (simulating a monthly refresh),
+    \item a QPM fine-tuned update using residual stacking and Anchored Calibration.
+\end{enumerate}
+
+\paragraph{Stability results.}
+We compute the mean absolute change in score on the test set:
+\[
+\text{churn} = \mathbb{E}\left[ | \hat{y}^{(1)} - \hat{y}^{(2)} | \right].
+\]
+
+The results are:
+
+\begin{itemize}
+    \item \textbf{GBM retrain churn:} $0.003635$
+    \item \textbf{QPM fine-tune churn:} $0.001067$
+\end{itemize}
+
+Thus, QPM fine-tuning reduces churn by a factor of
+\[
+\frac{0.003635}{0.001067} \approx 3.4\times.
+\]
+
+The reduction is especially notable given the scale of the dataset and
+the complexity of the feature space. QPM’s fixed bin structure acts as a
+highly stable scoring spine: latent updates shift PD centers smoothly
+but rarely enough to alter band membership.
+
+\paragraph{Summary.}
+On a large, production-grade credit scoring dataset, QPM achieves:
+\begin{itemize}
+    \item essentially identical MSE to GBM,
+    \item negligible losses in AUC/KS,
+    \item \emph{3.4$\times$ lower churn} under model updates.
+\end{itemize}
+
+These results reinforce the central claim of this paper: \emph{QPMs
+provide GBM-level predictive power with materially improved stability,
+making them uniquely suited for regulated credit decisioning systems.}
+
+
+\subsection{Experiment 3: Clinical Risk Stratification on Framingham CHD}
+
+To evaluate the applicability of Quantized Prediction Models (QPMs) in 
+medical decisioning contexts, we conducted a third experiment using the 
+\emph{Framingham Heart Study} cardiovascular risk dataset 
+\citep{framingham2020}. This dataset is a widely used benchmark for 
+10-year coronary heart disease (CHD) prediction, with a binary endpoint 
+analogous to mortality-like clinical outcomes. The cohort exhibits 
+moderate class imbalance (15.2\% CHD incidence) and includes standard 
+clinical risk factors such as blood pressure, lipid profiles, smoking 
+status, and diabetes biomarkers.
+
+We compared QPM against a gradient-boosted tree (GBM) using the same
+feature set and identical preprocessing. QPM was configured with
+non-uniform supervised binning (\S\ref{sec:method}), Laplace/Bayesian
+smoothing of bin-level event rates, and a PD cap appropriate to
+non-extreme clinical risk contexts.
+
+\subsubsection{Predictive Performance}
+
+To determine whether QPM sacrifices discriminative power relative to
+GBM, we evaluated ROC--AUC along with both parametric and nonparametric
+uncertainty quantification. Confidence intervals were computed using
+2000 bootstrap resamples, and statistical significance was assessed with
+the DeLong test for correlated ROC curves.
+
+\begin{itemize}
+    \item \textbf{GBM:} 
+    $\text{AUC}_{\text{GBM}} = 0.683 \; (95\%\,\text{CI}: 0.633\text{--}0.729)$
+    \item \textbf{QPM (latent):}
+    $\text{AUC}_{\text{QPM}} = 0.666 \; (95\%\,\text{CI}: 0.616\text{--}0.712)$
+    \item \textbf{DeLong test: } $p = 0.46$
+\end{itemize}
+
+The confidence intervals exhibit substantial overlap, and the DeLong
+test indicates no statistically significant difference between the ROC
+curves. Thus, QPM preserves essentially all of the discriminative
+ability of GBM on this medical prediction task, consistent with our
+findings on credit datasets.
+
+\subsubsection{Discrete Risk Stratification}
+
+While GBM outputs continuous risk estimates, QPM produces a discrete,
+monotone risk ladder with clinically meaningful segmentation. In this
+experiment, the optimal configuration yielded 13 risk strata spanning
+low-risk ($\approx 2\%$ event rate) to high-risk ($\approx 55\%$ event
+rate), with smooth transitions enforced by isotonic calibration.
+
+This discretization mirrors the structure of traditional clinical scoring
+systems (e.g., CHD risk categories or ASCVD pooled-cohort score bands),
+but without requiring handcrafted point systems or domain-specific
+threshold engineering. The quantized outputs therefore provide an
+interpretable, governance-friendly representation while retaining the
+flexibility of data-driven modeling.
+
+\subsubsection{Clinical Integration Considerations}
+
+Although we do not directly compare to the Framingham Risk Score (FRS),
+our results suggest several complementary pathways for clinical
+integration:
+
+\begin{itemize}
+    \item \textbf{Risk Category Alignment.}
+    QPM strata can be mapped to standard clinical risk categories (low,
+    borderline, intermediate, high) by matching mean predicted
+    probabilities or event rates.
+
+    \item \textbf{Guideline-Compatible Thresholds.}
+    Because bin edges are monotone and stable, clinicians may anchor
+    decision thresholds (e.g., statin eligibility, diagnostic referral)
+    to fixed QPM bands without concern for drift under retraining.
+
+    \item \textbf{Auditable and Comparable Risk Communication.}
+    QPM produces a ladder of discrete risk levels analogous to familiar
+    clinical scoring tools, enhancing communication with clinicians and
+    enabling explainable patient-facing risk reports.
+
+    \item \textbf{Stability Under Model Updates.}
+    Anchored Calibration guarantees zero rank-order churn, supporting
+    longitudinal risk monitoring and cohort tracking—critical in
+    longitudinal studies like Framingham.
+\end{itemize}
+
+Taken together, these findings demonstrate that QPM can operate as a
+drop-in replacement for continuous models in clinical risk estimation,
+preserving accuracy while greatly improving interpretability and
+operational stability.
+
+
+
+%==============================================================
+\section{Discussion and Conclusion}
+\label{sec:discussion}
+%==============================================================
+
+We introduced \emph{Quantized Prediction Models} (QPMs), a framework for
+output-space regularization that constrains regression predictions to a
+finite, ordered set of values. While the overall structure resembles
+longstanding practices in scorecard construction—latent scoring followed
+by supervised discretization—our formulation extends this tradition by
+explicitly treating the discretization step as a functional regularizer
+and by introducing stability guarantees suited for modern machine
+learning pipelines.
+
+Rather than regularizing model parameters or architectures, QPMs
+regularize the \emph{prediction space} directly. A flexible latent
+function (e.g., gradient boosting) is followed by a supervised
+quantization operator that produces a discrete, auditable score ladder
+with monotone, operationally meaningful prediction levels. This
+output-space bottleneck suppresses sub-bin fluctuations, enhances
+stability, and yields structures compatible with traditional governance
+frameworks while retaining the modeling power of modern ensembles.
+
+Across multiple public datasets, QPMs match the predictive performance
+of strong Gradient Boosting Machine (GBM) baselines in common
+evaluation metrics such as AUC, KS, and MSE—even under relatively
+coarse quantization. At the same time, QPM updates exhibit significantly
+lower churn than independent retraining of GBMs. With fixed bin edges,
+Anchored Calibration guarantees \emph{zero} rank-order churn, enabling
+models to incorporate new information without disrupting downstream
+decision logic or recalibration procedures.
+
+These results support three central conclusions:
+
+\begin{enumerate}
+    \item \textbf{Predictive Parity.}  
+    Coarse quantization (on the order of tens of levels) is sufficient to
+    match the performance of continuous-output GBMs on tabular data.
+
+    \item \textbf{Stability.}  
+    QPM fine-tuning with fixed bin edges yields 2--4$\times$ reductions
+    in prediction churn across model updates, with strict zero-churn
+    guarantees under calibration-only adjustments.
+
+    \item \textbf{Governance Alignment.}  
+    The discrete score ladders produced by QPMs offer stable,
+    interpretable structures compatible with governance and audit
+    requirements, while preserving the flexibility of modern ensemble
+    methods.
+\end{enumerate}
+
+More broadly, QPMs demonstrate that the output space is a powerful but
+underexplored axis for regularization. They provide a principled middle
+ground between fully differentiable machine learning models and
+handcrafted risk scorecards, unifying the statistical advantages of
+modern ensembles with the stability needs of real-world decision
+systems.
+
+\paragraph{Future Work.}
+Several promising extensions arise from this formulation:
+
+\begin{itemize}
+    \item \textbf{Multi-Class and Ordinal Quantization.}  
+    Extending QPMs to multi-class or ordinal targets would broaden their
+    applicability to domains such as fraud detection, collections,
+    medical-risk staging, and behavioral modeling.
+
+    \item \textbf{Reinforcement Learning.}  
+    Quantized value functions or discretized policy outputs may stabilize
+    policy iteration in settings with noisy rewards or non-stationary
+    environments.
+
+    \item \textbf{Differentiable Quantizers.}  
+    Soft or annealed quantizers could connect QPMs to differentiable
+    architectures and straight-through gradient estimators, enabling
+    end-to-end training.
+
+    \item \textbf{Dynamic Bin Evolution.}  
+    Bayesian or online-learning variants may support gradual bin-edge
+    adaptation while preserving stability guarantees or bounded churn.
+\end{itemize}
+
+In summary, QPMs offer a practical and principled approach that unifies
+the predictive strengths of modern machine learning with the stability
+and interpretability required for responsible deployment. This work
+highlights output-space regularization as a central design dimension in
+predictive modeling and invites further exploration of its theoretical
+and applied implications.
+
+%==============================================================
+\appendix
+\section*{Appendix}
+\addcontentsline{toc}{section}{Appendix}
+%==============================================================
+
+
+%--------------------------------------------------------------
+\section{Proof of Zero-Churn Property}
+\label{app:zero-churn}
+%--------------------------------------------------------------
+
+Let $B(F(x))$ denote the bin index assigned to latent score $F(x)$ under
+fixed edges $\{b_1,\ldots,b_{K+1}\}$. Anchored Calibration updates only
+the bin representatives $\mu_k$ via:
+\[
+\mu_k^{\text{new}}
+=
+\alpha \,\mu_k^{\text{old}}
++
+(1-\alpha)\,\mu_k^{\text{obs}},
+\qquad \alpha\in[0,1].
+\]
+
+\begin{proposition}[Zero Rank-Order Churn]
+If bin edges remain fixed, then Anchored Calibration preserves rank
+ordering exactly:
+\[
+F(x_i) < F(x_j)
+\quad\Rightarrow\quad
+Q_{\text{new}}(F(x_i)) \le Q_{\text{new}}(F(x_j)),
+\]
+with equality only when both lie in the same bin.
+\end{proposition}
+
+\begin{proof}
+Since bin edges are fixed, any point $x$ remains assigned to the same 
+bin under the update. Therefore:
+\[
+Q_{\text{new}}(F(x)) = \mu^{\text{new}}_{B(F(x))}.
+\]
+If $F(x_i) < F(x_j)$, then $B(F(x_i)) \le B(F(x_j))$. Because the mapping 
+$k\mapsto\mu^{\text{new}}_k$ is monotone (as convex combinations of 
+monotone sequences), the stated inequality follows.
+\end{proof}
+
+
+%--------------------------------------------------------------
+\section{Variance Reduction Under Quantization}
+\label{app:variance}
+%--------------------------------------------------------------
+
+Let $Z = F(X)$ denote the latent score random variable and define the
+quantized prediction:
+\[
+\hat{Y}_Q = \mathbb{E}[Z \mid B(Z)].
+\]
+
+\begin{proposition}[Variance Reduction]
+\[
+\mathrm{Var}(\hat{Y}_Q) \;\le\; \mathrm{Var}(Z).
+\]
+\end{proposition}
+
+\begin{proof}
+Apply the law of total variance:
+\[
+\mathrm{Var}(Z)
+=
+\mathbb{E}\!\left[\mathrm{Var}(Z\mid B(Z))\right]
++\mathrm{Var}\!\left(\mathbb{E}[Z\mid B(Z)]\right),
+\]
+and recognize the second term as $\mathrm{Var}(\hat{Y}_Q)$.
+\end{proof}
+
+
+%--------------------------------------------------------------
+\section{QPM as a Generalization of Logistic Scorecards}
+\label{app:scorecards}
+%--------------------------------------------------------------
+
+Under linear $F$, fixed equally spaced edges, and isotonic calibration,
+QPM collapses to a discretized logistic regression scorecard. This
+provides a conceptual bridge between traditional scorecards and 
+data-driven QPM ladders, supporting adoption in regulated risk settings.
+
+
+%--------------------------------------------------------------
+\section{Conceptual Extension: Differentiable Soft Quantizers}
+\label{app:soft}
+%--------------------------------------------------------------
+
+As a forward-looking note, soft or temperature-controlled quantizers
+could enable end-to-end differentiable architectures using straight-
+through gradients. While not explored empirically in this work, such
+variants may unify QPMs with neural approaches to structured outputs.
+
+\section{Statistical Tests for AUC Comparison}
+
+\paragraph{Bootstrap Confidence Intervals.}
+AUC confidence intervals were estimated using 2000 bootstrap resamples
+with patient-level sampling and bias-corrected accelerated (BCa)
+intervals. This approach is nonparametric and robust to moderate class
+imbalance.
+
+\paragraph{DeLong Test.}
+To assess statistical significance in AUC differences between correlated
+ROC curves, we applied the DeLong method, which provides an exact,
+distribution-free estimate of the covariance of AUC estimators under
+paired predictions. Given AUCs $A_1$ and $A_2$, the test statistic is
+\[
+Z = \frac{A_1 - A_2}{\sqrt{\mathrm{Var}(A_1) + \mathrm{Var}(A_2) - 
+2\,\mathrm{Cov}(A_1, A_2)}},
+\]
+with two-sided $p$-value computed under the standard normal
+approximation.
+
+\section*{Acknowledgments}
+{ \setlength{\parindent}{0pt} \setlength{\parskip}{0.5em}
+
+The author completed this work independently. Discussions with
+practitioners in applied machine learning and risk modeling indirectly
+influenced the motivation to explore stability and governance-oriented
+approaches to prediction. No organization or individual participated in
+the research, development, or writing of this work.
+
+Large Language Models were used for conceptual exploration, writing
+assistance, and clarity of exposition.
+}
+
+
+\bibliographystyle{plainnat}   % or another natbib-compatible style
+\bibliography{citations}  
+
+\end{document}

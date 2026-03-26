@@ -13,13 +13,14 @@ labels y to fit a supervised output quantizer.
 """
 
 from .quantizer import QPMQuantizer
-from .calibration import AnchoredCalibration
+from .calibration import AnchoredCalibration, residual_stack
 from .metrics import auc_score, ks_score, mse_score, bootstrap_ci, delong_test, churn_metrics
 from .scorecard import WoEScorecard
 
 __all__ = [
     "QPMQuantizer",
     "AnchoredCalibration",
+    "residual_stack",
     "auc_score",
     "ks_score",
     "mse_score",

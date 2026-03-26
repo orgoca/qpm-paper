@@ -170,7 +170,8 @@ def residual_stack(
         Updated latent scores for X_new.
     residual_booster : fitted XGBRegressor
         The shallow residual booster h(x).  Can be used to update scores
-        on other datasets via ``eta * residual_booster.predict(X)``.
+        on other datasets via ``residual_booster.predict(X)`` (eta shrinkage
+        is already baked in by XGBoost's learning_rate parameter).
     """
     try:
         import xgboost as xgb
@@ -196,5 +197,5 @@ def residual_stack(
     )
     h.fit(X_new, residuals)
 
-    F_updated = F_base + eta * h.predict(X_new)
+    F_updated = F_base + h.predict(X_new)   # h already incorporates eta internally
     return F_updated, h

@@ -56,6 +56,22 @@ Run the notebooks in order. Each is fully self-contained.
 | Notebook | Experiment | What it reproduces |
 |---|---|---|
 | `notebooks/01_uci_default.ipynb` | Exp 1 — UCI Credit Card | Table 1, Table 2, Figure 1, churn analysis |
+
+**Workbook‑to‑Manuscript Sync:** after running the experiments the
+artifacts directory contains `report.json` files. You can automatically
+update the canonical numbers in `paper.txt` (the manuscript) by executing:
+
+```bash
+python generate_notebooks.py --sync-paper
+```
+
+This replaces the hard‑coded metrics in the manuscript with the
+actual values produced by the notebooks, ensuring the manuscript always
+reflects the latest results.  In addition, the generation script now
+embeds **canonical assertion checks** directly in each experiment cell
+(see comments in the notebooks). When you regenerate a notebook the
+code will raise an exception if any of the reported metrics drift from
+the current canonical values, making it easy to spot unintended changes.
 | `notebooks/02_home_credit.ipynb` | Exp 2 — Home Credit | Table 3, churn (3.4× factor) |
 | `notebooks/03_framingham.ipynb`  | Exp 3 — Framingham CHD | AUC CIs, DeLong test (p=0.46), 13-strata ladder |
 

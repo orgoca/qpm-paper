@@ -30,3 +30,7 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Local-only workflow files
+generate_notebooks.py
+QPM_PAPER_LATEX.txt
