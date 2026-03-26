@@ -34,3 +34,5 @@ Thumbs.db
 # Local-only workflow files
 generate_notebooks.py
 QPM_PAPER_LATEX.txt
+paper.txt
+paper_DEPRECATED_OUTDATED_LOCAL.txt
