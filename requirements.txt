@@ -12,3 +12,4 @@ ipykernel>=6.0
 
 # Data download
 kaggle>=1.6
+ucimlrepo>=0.0.3

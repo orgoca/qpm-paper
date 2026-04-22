@@ -78,7 +78,9 @@ qpm/
 
 ## Canonical Results (Current Repo Runs)
 
-The values below come from `artifacts/*/report.json` in this repository.
+The values below were produced by running the notebooks locally. Artifact files
+(`artifacts/*/report.json`) are generated on-disk when you run the notebooks
+but are not committed to the repository.
 
 ### Exp 1: UCI Default
 

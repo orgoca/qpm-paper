@@ -15,6 +15,7 @@ model that exposes a ``.predict(X)`` method.
 from __future__ import annotations
 
 import numpy as np
+import xgboost as xgb
 from sklearn.isotonic import IsotonicRegression
 
 
@@ -173,14 +174,6 @@ def residual_stack(
         on other datasets via ``residual_booster.predict(X)`` (eta shrinkage
         is already baked in by XGBoost's learning_rate parameter).
     """
-    try:
-        import xgboost as xgb
-    except ImportError as exc:
-        raise ImportError(
-            "xgboost is required for residual_stack. "
-            "Install it with: pip install xgboost"
-        ) from exc
-
     X_new = np.asarray(X_new, dtype=float)
     y_new = np.asarray(y_new, dtype=float)
 
