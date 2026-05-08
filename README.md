@@ -120,7 +120,7 @@ These current runs preserve the core paper conclusions: QPM maintains most discr
 @article{ortizgomez2025qpm,
   title   = {Quantized Prediction Models: Output-Space Regularization
              for Stable and Interpretable Regression},
-  author  = {Ortiz-G{\'o}mez, Carlos R.},
+  author  = {Ortiz-Gomez, Carlos R.},
   year    = {2025},
   month   = {December},
   doi     = {10.5281/zenodo.17785949},
